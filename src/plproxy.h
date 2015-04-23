@@ -288,6 +288,10 @@ typedef struct ProxyCluster
 
 	/* notice processing: provide info about currently executing function */
 	struct ProxyFunction	*cur_func;
+
+#ifdef PLPROXY_DTRACE
+    unsigned long	txid;
+#endif
 } ProxyCluster;
 
 /*

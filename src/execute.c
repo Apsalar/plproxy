@@ -198,7 +198,7 @@ send_query(ProxyFunction *func, ProxyConnection *conn,
 		return;
 
 #ifdef PLPROXY_DTRACE
-    PLPROXY_SHARD_SENDSTART();
+    PLPROXY_SHARD_SENDSTART(conn->cluster->txid, (char *) conn->connstr);
 #endif
 
 	/* use binary result only on same backend ver */
@@ -232,7 +232,7 @@ send_query(ProxyFunction *func, ProxyConnection *conn,
 	flush_connection(func, conn);
 
 #ifdef PLPROXY_DTRACE
-    PLPROXY_SHARD_SENDDONE();
+    PLPROXY_SHARD_SENDDONE(conn->cluster->txid, (char *) conn->connstr);
 #endif
 }
 
@@ -476,7 +476,8 @@ another_result(ProxyFunction *func, ProxyConnection *conn)
 		else
         {
 #ifdef PLPROXY_DTRACE
-            PLPROXY_SHARD_RESULTSDONE();
+            PLPROXY_SHARD_RESULTSDONE(conn->cluster->txid,
+                                      (char *) conn->connstr);
 #endif
 			conn->cur->state = C_DONE;
         }
@@ -484,7 +485,7 @@ another_result(ProxyFunction *func, ProxyConnection *conn)
 	}
 
 #ifdef PLPROXY_DTRACE
-    PLPROXY_SHARD_RESULTSRCVD();
+    PLPROXY_SHARD_RESULTSRCVD(conn->cluster->txid, (char *) conn->connstr);
 #endif
 
 	/* ignore result when waiting for cancel */
@@ -745,7 +746,7 @@ remote_execute(ProxyFunction *func)
 			continue;
 
 #ifdef PLPROXY_DTRACE
-        PLPROXY_SHARD_CONNPREP();
+        PLPROXY_SHARD_CONNPREP(conn->cluster->txid, (char *) conn->connstr);
 #endif
 
 		/* check if conn is alive, and launch if not */
@@ -756,11 +757,13 @@ remote_execute(ProxyFunction *func)
 		if (conn->cur->state == C_READY)
         {
 #ifdef PLPROXY_DTRACE
-            PLPROXY_SHARD_CONNREADY();
+            PLPROXY_SHARD_CONNREADY(conn->cluster->txid,
+                                    (char *) conn->connstr);
 #endif
 			send_query(func, conn, conn->param_values, conn->param_lengths, conn->param_formats);
 #ifdef PLPROXY_DTRACE
-            PLPROXY_SHARD_RESULTSWAIT();
+            PLPROXY_SHARD_RESULTSWAIT(conn->cluster->txid,
+                                      (char *) conn->connstr);
 #endif
         }
 	}
@@ -788,11 +791,13 @@ remote_execute(ProxyFunction *func)
 			if (conn->cur->state == C_READY)
             {
 #ifdef PLPROXY_DTRACE
-                PLPROXY_SHARD_CONNREADY();
+                PLPROXY_SHARD_CONNREADY(conn->cluster->txid,
+                                        (char *) conn->connstr);
 #endif
 				send_query(func, conn, conn->param_values, conn->param_lengths, conn->param_formats);
 #ifdef PLPROXY_DTRACE
-                PLPROXY_SHARD_RESULTSWAIT();
+                PLPROXY_SHARD_RESULTSWAIT(conn->cluster->txid,
+                                          (char *) conn->connstr);
 #endif
             }
 
@@ -1286,6 +1291,15 @@ void plproxy_disconnect(ProxyConnectionState *cur)
 	cur->waitCancel = 0;
 }
 
+#ifdef PLPROXY_DTRACE
+static unsigned long
+mktxid()
+{
+    static unsigned long txid = 0;
+    return ++txid;
+}
+#endif
+
 /* Select partitions and execute query on them */
 void
 plproxy_exec(ProxyFunction *func, FunctionCallInfo fcinfo)
@@ -1297,7 +1311,8 @@ plproxy_exec(ProxyFunction *func, FunctionCallInfo fcinfo)
 	PG_TRY();
 	{
 #ifdef PLPROXY_DTRACE
-        PLPROXY_PROXY_EXECSTART();
+        func->cur_cluster->txid = mktxid();
+        PLPROXY_PROXY_EXECSTART(func->cur_cluster->txid);
 #endif
 
 		func->cur_cluster->busy = true;
@@ -1317,7 +1332,7 @@ plproxy_exec(ProxyFunction *func, FunctionCallInfo fcinfo)
 		func->cur_cluster->busy = false;
 
 #ifdef PLPROXY_DTRACE
-        PLPROXY_PROXY_EXECDONE();
+        PLPROXY_PROXY_EXECDONE(func->cur_cluster->txid);
 #endif
 	}
 	PG_CATCH();
@@ -1325,7 +1340,7 @@ plproxy_exec(ProxyFunction *func, FunctionCallInfo fcinfo)
 		func->cur_cluster->busy = false;
 
 #ifdef PLPROXY_DTRACE
-        PLPROXY_PROXY_EXECEXCEPT();
+        PLPROXY_PROXY_EXECEXCEPT(func->cur_cluster->txid);
 #endif
 		if (geterrcode() == ERRCODE_QUERY_CANCELED)
 			remote_cancel(func);
@@ -1337,5 +1352,3 @@ plproxy_exec(ProxyFunction *func, FunctionCallInfo fcinfo)
 	}
 	PG_END_TRY();
 }
-
-

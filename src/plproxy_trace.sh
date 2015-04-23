@@ -8,52 +8,52 @@ plproxy*:::main-error
 
 plproxy*:::proxy-execstart
 {
-    printf("<placeholder>");
+    printf("T%u", arg0);
 }
 
 plproxy*:::proxy-execdone
 {
-    printf("<placeholder>");
+    printf("T%u", arg0);
 }
 
 plproxy*:::proxy-execexcept
 {
-    printf("<placeholder>");
+    printf("T%u", arg0);
 }
 
 plproxy*:::shard-connprep
 {
-    printf("<placeholder>");
+    printf("T%u %s", arg0, copyinstr(arg1));
 }
 
 plproxy*:::shard-connready
 {
-    printf("<placeholder>");
+    printf("T%u %s", arg0, copyinstr(arg1));
 }
 
 plproxy*:::shard-sendstart
 {
-    printf("<placeholder>");
+    printf("T%u %s", arg0, copyinstr(arg1));
 }
 
 plproxy*:::shard-senddone
 {
-    printf("<placeholder>");
+    printf("T%u %s", arg0, copyinstr(arg1));
 }
 
 plproxy*:::shard-resultswait
 {
-    printf("<placeholder>");
+    printf("T%u %s", arg0, copyinstr(arg1));
 }
 
 plproxy*:::shard-resultsrcvd
 {
-    printf("<placeholder>");
+    printf("T%u %s", arg0, copyinstr(arg1));
 }
 
 plproxy*:::shard-resultsdone
 {
-    printf("<placeholder>");
+    printf("T%u %s", arg0, copyinstr(arg1));
 }
 
 '
