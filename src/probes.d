@@ -1,12 +1,12 @@
 provider plproxy {
 
-   probe main__error(char * name, int arg_count, char * msg, int errcode);
+   probe main__error(char * name, int arg_count, char * msg);
 
-   probe proxy__execstart(unsigned long txid);
+   probe proxy__execstart(unsigned long txid, unsigned int oid, char * funcname);
 
    probe proxy__execdone(unsigned long txid);
 
-   probe proxy__execexcept(unsigned long txid);
+   probe proxy__execexcept(unsigned long txid, int errcode);
 
    probe shard__connprep(unsigned long txid, char * connstr);
 

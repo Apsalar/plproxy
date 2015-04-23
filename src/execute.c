@@ -1312,7 +1312,9 @@ plproxy_exec(ProxyFunction *func, FunctionCallInfo fcinfo)
 	{
 #ifdef PLPROXY_DTRACE
         func->cur_cluster->txid = mktxid();
-        PLPROXY_PROXY_EXECSTART(func->cur_cluster->txid);
+        PLPROXY_PROXY_EXECSTART(func->cur_cluster->txid,
+                                func->oid,
+                                (char *) func->name);
 #endif
 
 		func->cur_cluster->busy = true;

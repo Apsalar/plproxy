@@ -8,52 +8,52 @@ plproxy*:::main-error
 
 plproxy*:::proxy-execstart
 {
-    printf("T%u", arg0);
+    printf("txid=%u oid=%u funcname=\"%s\"", arg0, arg1, copyinstr(arg2));
 }
 
 plproxy*:::proxy-execdone
 {
-    printf("T%u", arg0);
+    printf("txid=%u", arg0);
 }
 
 plproxy*:::proxy-execexcept
 {
-    printf("T%u, errcode=%d", arg0, arg1);
+    printf("txid=%u, errcode=%d", arg0, arg1);
 }
 
 plproxy*:::shard-connprep
 {
-    printf("T%u %s", arg0, copyinstr(arg1));
+    printf("txid=%u connstr=\"%s\"", arg0, copyinstr(arg1));
 }
 
 plproxy*:::shard-connready
 {
-    printf("T%u %s", arg0, copyinstr(arg1));
+    printf("txid=%u connstr=\"%s\"", arg0, copyinstr(arg1));
 }
 
 plproxy*:::shard-sendstart
 {
-    printf("T%u %s", arg0, copyinstr(arg1));
+    printf("txid=%u connstr=\"%s\"", arg0, copyinstr(arg1));
 }
 
 plproxy*:::shard-senddone
 {
-    printf("T%u %s", arg0, copyinstr(arg1));
+    printf("txid=%u connstr=\"%s\"", arg0, copyinstr(arg1));
 }
 
 plproxy*:::shard-resultswait
 {
-    printf("T%u %s", arg0, copyinstr(arg1));
+    printf("txid=%u connstr=\"%s\"", arg0, copyinstr(arg1));
 }
 
 plproxy*:::shard-resultsrcvd
 {
-    printf("T%u %s", arg0, copyinstr(arg1));
+    printf("txid=%u connstr=\"%s\"", arg0, copyinstr(arg1));
 }
 
 plproxy*:::shard-resultsdone
 {
-    printf("T%u %s", arg0, copyinstr(arg1));
+    printf("txid=%u connstr=\"%s\"", arg0, copyinstr(arg1));
 }
 
 '
