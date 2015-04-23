@@ -35,7 +35,7 @@ endif
 ifdef PLPROXY_DTRACE
 PG_CPPFLAGS += -DPLPROXY_DTRACE
 OBJS += src/probes.o
-DTRACE_OBJS = src/main.o
+DTRACE_OBJS = src/main.o src/execute.o
 endif
 EXTRA_CLEAN += src/probes.[cho]
 

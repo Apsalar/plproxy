@@ -48,6 +48,10 @@
 #include <arpa/inet.h>
 #endif
 
+#ifdef PLPROXY_DTRACE
+#include <sys/sdt.h>
+#include "probes.h"
+#endif
 
 #if PG_VERSION_NUM < 80400
 static int geterrcode(void)
@@ -193,6 +197,10 @@ send_query(ProxyFunction *func, ProxyConnection *conn,
 	if (conn->cur->tuning)
 		return;
 
+#ifdef PLPROXY_DTRACE
+    PLPROXY_SHARD_SENDSTART();
+#endif
+
 	/* use binary result only on same backend ver */
 	if (cf->disable_binary == 0 && conn->cur->same_ver)
 	{
@@ -222,6 +230,10 @@ send_query(ProxyFunction *func, ProxyConnection *conn,
 
 	/* flush it down */
 	flush_connection(func, conn);
+
+#ifdef PLPROXY_DTRACE
+    PLPROXY_SHARD_SENDDONE();
+#endif
 }
 
 /* returns false of conn should be dropped */
@@ -462,9 +474,18 @@ another_result(ProxyFunction *func, ProxyConnection *conn)
 		if (conn->cur->tuning)
 			conn->cur->state = C_READY;
 		else
+        {
+#ifdef PLPROXY_DTRACE
+            PLPROXY_SHARD_RESULTSDONE();
+#endif
 			conn->cur->state = C_DONE;
+        }
 		return false;
 	}
+
+#ifdef PLPROXY_DTRACE
+    PLPROXY_SHARD_RESULTSRCVD();
+#endif
 
 	/* ignore result when waiting for cancel */
 	if (conn->cur->waitCancel)
@@ -723,13 +744,25 @@ remote_execute(ProxyFunction *func)
 		if (!conn->run_tag)
 			continue;
 
+#ifdef PLPROXY_DTRACE
+        PLPROXY_SHARD_CONNPREP();
+#endif
+
 		/* check if conn is alive, and launch if not */
 		prepare_conn(func, conn);
 		pending++;
 
 		/* if conn is ready, then send query away */
 		if (conn->cur->state == C_READY)
+        {
+#ifdef PLPROXY_DTRACE
+            PLPROXY_SHARD_CONNREADY();
+#endif
 			send_query(func, conn, conn->param_values, conn->param_lengths, conn->param_formats);
+#ifdef PLPROXY_DTRACE
+            PLPROXY_SHARD_RESULTSWAIT();
+#endif
+        }
 	}
 
 	/* now loop until all results are arrived */
@@ -753,7 +786,15 @@ remote_execute(ProxyFunction *func)
 
 			/* login finished, send query */
 			if (conn->cur->state == C_READY)
+            {
+#ifdef PLPROXY_DTRACE
+                PLPROXY_SHARD_CONNREADY();
+#endif
 				send_query(func, conn, conn->param_values, conn->param_lengths, conn->param_formats);
+#ifdef PLPROXY_DTRACE
+                PLPROXY_SHARD_RESULTSWAIT();
+#endif
+            }
 
 			if (conn->cur->state != C_DONE)
 				pending++;
@@ -1255,6 +1296,10 @@ plproxy_exec(ProxyFunction *func, FunctionCallInfo fcinfo)
 	 */
 	PG_TRY();
 	{
+#ifdef PLPROXY_DTRACE
+        PLPROXY_PROXY_EXECSTART();
+#endif
+
 		func->cur_cluster->busy = true;
 		func->cur_cluster->cur_func = func;
 
@@ -1270,11 +1315,18 @@ plproxy_exec(ProxyFunction *func, FunctionCallInfo fcinfo)
 		remote_execute(func);
 
 		func->cur_cluster->busy = false;
+
+#ifdef PLPROXY_DTRACE
+        PLPROXY_PROXY_EXECDONE();
+#endif
 	}
 	PG_CATCH();
 	{
 		func->cur_cluster->busy = false;
 
+#ifdef PLPROXY_DTRACE
+        PLPROXY_PROXY_EXECEXCEPT();
+#endif
 		if (geterrcode() == ERRCODE_QUERY_CANCELED)
 			remote_cancel(func);
 
