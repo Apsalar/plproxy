@@ -18,7 +18,7 @@ plproxy*:::proxy-execdone
 
 plproxy*:::proxy-execexcept
 {
-    printf("T%u", arg0);
+    printf("T%u, errcode=%d", arg0, arg1);
 }
 
 plproxy*:::shard-connprep

@@ -290,7 +290,7 @@ typedef struct ProxyCluster
 	struct ProxyFunction	*cur_func;
 
 #ifdef PLPROXY_DTRACE
-    unsigned long	txid;
+    uint64_t	txid;
 #endif
 } ProxyCluster;
 

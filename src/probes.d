@@ -1,6 +1,6 @@
 provider plproxy {
 
-   probe main__error(char * name, int arg_count, char * msg);
+   probe main__error(char * name, int arg_count, char * msg, int errcode);
 
    probe proxy__execstart(unsigned long txid);
 

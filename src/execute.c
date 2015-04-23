@@ -1292,10 +1292,10 @@ void plproxy_disconnect(ProxyConnectionState *cur)
 }
 
 #ifdef PLPROXY_DTRACE
-static unsigned long
+static uint64_t
 mktxid()
 {
-    static unsigned long txid = 0;
+    static uint64_t txid = 0;
     return ++txid;
 }
 #endif
@@ -1337,14 +1337,17 @@ plproxy_exec(ProxyFunction *func, FunctionCallInfo fcinfo)
 	}
 	PG_CATCH();
 	{
+        int errcode;
+
 		func->cur_cluster->busy = false;
 
-#ifdef PLPROXY_DTRACE
-        PLPROXY_PROXY_EXECEXCEPT(func->cur_cluster->txid);
-#endif
-		if (geterrcode() == ERRCODE_QUERY_CANCELED)
+        errcode = geterrcode();
+		if (errcode == ERRCODE_QUERY_CANCELED)
 			remote_cancel(func);
 
+#ifdef PLPROXY_DTRACE
+        PLPROXY_PROXY_EXECEXCEPT(func->cur_cluster->txid, errcode);
+#endif
 		/* plproxy_remote_error() cannot clean itself, do it here */
 		plproxy_clean_results(func->cur_cluster);
 
