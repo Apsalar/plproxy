@@ -32,6 +32,11 @@ ifdef VPATH
 PG_CPPFLAGS += -I$(VPATH)/src
 endif
 
+ifdef PLPROXY_DTRACE
+PG_CPPFLAGS += -DPLPROXY_DTRACE
+DTRACE_OBJS = src/main.o
+endif
+
 DISTNAME = $(EXTENSION)-$(DISTVERSION)
 
 # regression testing setup
@@ -123,6 +128,14 @@ sql/plproxy--unpackaged--$(EXTVERSION).sql: sql/ext_unpackaged.sql
 # dependencies
 
 $(OBJS): $(HDRS)
+
+ifdef PLPROXY_DTRACE
+src/probes.h:	src/probes.d
+	dtrace -h -s src/probes.d -o src/probes.h
+
+src/probes.o:	src/probes.d $(DTRACE_OBJS)
+	dtrace -G -64 -s src/probes.d -o src/probes.o $(DTRACE_OBJS)
+endif
 
 # utility rules
 

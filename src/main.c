@@ -50,6 +50,11 @@
 
 #include <sys/time.h>
 
+#ifdef PLPROXY_DTRACE
+#include <sys/sdt.h>
+#include "probes.h"
+#endif
+
 #ifndef PG_MODULE_MAGIC
 #error PL/Proxy requires 8.2
 #else
@@ -75,6 +80,10 @@ plproxy_error(ProxyFunction *func, const char *fmt,...)
 	va_end(ap);
 
 	plproxy_clean_results(func->cur_cluster);
+
+#ifdef PLPROXY_DTRACE
+    PLPROXY_MAIN_ERROR((char *) func->name, func->arg_count, msg);
+#endif
 
 	elog(ERROR, "PL/Proxy function %s(%d): %s",
 		 func->name, func->arg_count, msg);
