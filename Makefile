@@ -34,8 +34,10 @@ endif
 
 ifdef PLPROXY_DTRACE
 PG_CPPFLAGS += -DPLPROXY_DTRACE
+OBJS += src/probes.o
 DTRACE_OBJS = src/main.o
 endif
+EXTRA_CLEAN += src/probes.[cho]
 
 DISTNAME = $(EXTENSION)-$(DISTVERSION)
 
@@ -130,6 +132,8 @@ sql/plproxy--unpackaged--$(EXTVERSION).sql: sql/ext_unpackaged.sql
 $(OBJS): $(HDRS)
 
 ifdef PLPROXY_DTRACE
+$(DTRACE_OBJS): src/probes.h
+
 src/probes.h:	src/probes.d
 	dtrace -h -s src/probes.d -o src/probes.h
 
