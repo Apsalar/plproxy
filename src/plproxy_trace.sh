@@ -21,6 +21,16 @@ plproxy*:::proxy-execexcept
     printf("txid=%u, errcode=%d", arg0, arg1);
 }
 
+plproxy*:::proxy-cancelstart
+{
+    printf("txid=%u", arg0);
+}
+
+plproxy*:::proxy-canceldone
+{
+    printf("txid=%u", arg0);
+}
+
 plproxy*:::shard-connprep
 {
     printf("txid=%u connstr=\"%s\"", arg0, copyinstr(arg1));
@@ -52,6 +62,21 @@ plproxy*:::shard-resultsrcvd
 }
 
 plproxy*:::shard-resultsdone
+{
+    printf("txid=%u connstr=\"%s\"", arg0, copyinstr(arg1));
+}
+
+plproxy*:::shard-canceldconn
+{
+    printf("txid=%u connstr=\"%s\"", arg0, copyinstr(arg1));
+}
+
+plproxy*:::shard-cancelwait
+{
+    printf("txid=%u connstr=\"%s\"", arg0, copyinstr(arg1));
+}
+
+plproxy*:::shard-canceldone
 {
     printf("txid=%u connstr=\"%s\"", arg0, copyinstr(arg1));
 }

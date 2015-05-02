@@ -8,6 +8,10 @@ provider plproxy {
 
    probe proxy__execexcept(unsigned long txid, int errcode);
 
+   probe proxy__cancelstart(unsigned long txid);
+
+   probe proxy__canceldone(unsigned long txid);
+
    probe shard__connprep(unsigned long txid, char * connstr);
 
    probe shard__connready(unsigned long txid, char * connstr);
@@ -21,4 +25,10 @@ provider plproxy {
    probe shard__resultsrcvd(unsigned long txid, char * connstr);
 
    probe shard__resultsdone(unsigned long txid, char * connstr);
+
+   probe shard__canceldconn(unsigned long txid, char * connstr);
+
+   probe shard__cancelwait(unsigned long txid, char * connstr);
+
+   probe shard__canceldone(unsigned long txid, char * connstr);
 };

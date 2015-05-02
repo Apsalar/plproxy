@@ -470,23 +470,26 @@ another_result(ProxyFunction *func, ProxyConnection *conn)
 	res = PQgetResult(conn->cur->db);
 	if (res == NULL)
 	{
+#ifdef PLPROXY_DTRACE
+		if (!conn->cur->tuning)
+		{
+			if (conn->cur->waitCancel)
+				PLPROXY_SHARD_CANCELDONE(conn->cluster->txid,
+										 (char *) conn->connstr);
+			else
+				PLPROXY_SHARD_RESULTSDONE(conn->cluster->txid,
+										 (char *) conn->connstr);
+		}
+#endif
 		conn->cur->waitCancel = 0;
 		if (conn->cur->tuning)
 			conn->cur->state = C_READY;
 		else
         {
-#ifdef PLPROXY_DTRACE
-            PLPROXY_SHARD_RESULTSDONE(conn->cluster->txid,
-                                      (char *) conn->connstr);
-#endif
 			conn->cur->state = C_DONE;
         }
 		return false;
 	}
-
-#ifdef PLPROXY_DTRACE
-    PLPROXY_SHARD_RESULTSRCVD(conn->cluster->txid, (char *) conn->connstr);
-#endif
 
 	/* ignore result when waiting for cancel */
 	if (conn->cur->waitCancel)
@@ -494,6 +497,10 @@ another_result(ProxyFunction *func, ProxyConnection *conn)
 		PQclear(res);
 		return true;
 	}
+
+#ifdef PLPROXY_DTRACE
+    PLPROXY_SHARD_RESULTSRCVD(conn->cluster->txid, (char *) conn->connstr);
+#endif
 
 	switch (PQresultStatus(res))
 	{
@@ -900,6 +907,10 @@ remote_cancel(ProxyFunction *func)
 	if (cluster == NULL)
 		return;
 
+#ifdef PLPROXY_DTRACE
+    PLPROXY_PROXY_CANCELSTART(func->cur_cluster->txid);
+#endif
+
 	for (i = 0; i < cluster->active_count; i++)
 	{
 		conn = cluster->active_list[i];
@@ -912,6 +923,10 @@ remote_cancel(ProxyFunction *func)
 			case C_QUERY_WRITE:
 			case C_CONNECT_READ:
 			case C_CONNECT_WRITE:
+#ifdef PLPROXY_DTRACE
+                PLPROXY_SHARD_CANCELDCONN(conn->cluster->txid,
+                                          (char *) conn->connstr);
+#endif
 				plproxy_disconnect(conn->cur);
 				break;
 			case C_QUERY_READ:
@@ -926,12 +941,20 @@ remote_cancel(ProxyFunction *func)
 				if (ret == 0)
 					elog(NOTICE, "Cancel query failed!");
 				else
+#ifdef PLPROXY_DTRACE
+                    PLPROXY_SHARD_CANCELWAIT(conn->cluster->txid,
+                                             (char *) conn->connstr);
+#endif
 					conn->cur->waitCancel = 1;
 				break;
 		}
 	}
 
 	remote_wait_for_cancel(func);
+
+#ifdef PLPROXY_DTRACE
+    PLPROXY_PROXY_CANCELDONE(func->cur_cluster->txid);
+#endif
 }
 
 /*
