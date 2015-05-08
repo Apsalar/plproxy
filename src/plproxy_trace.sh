@@ -31,6 +31,26 @@ plproxy*:::proxy-canceldone
     printf("txid=%u", arg0);
 }
 
+plproxy*:::proxy-pollstart
+{
+    printf("txid=%u", arg0);
+}
+
+plproxy*:::proxy-pollnone
+{
+    printf("txid=%u", arg0);
+}
+
+plproxy*:::proxy-pollintr
+{
+    printf("txid=%u", arg0);
+}
+
+plproxy*:::proxy-polldone
+{
+    printf("txid=%u", arg0);
+}
+
 plproxy*:::shard-connprep
 {
     printf("txid=%u connstr=\"%s\"", arg0, copyinstr(arg1));

@@ -12,6 +12,14 @@ provider plproxy {
 
    probe proxy__canceldone(unsigned long txid);
 
+   probe proxy__pollstart(unsigned long txid);
+
+   probe proxy__pollnone(unsigned long txid);
+
+   probe proxy__pollintr(unsigned long txid);
+
+   probe proxy__polldone(unsigned long txid);
+
    probe shard__connprep(unsigned long txid, char * connstr);
 
    probe shard__connready(unsigned long txid, char * connstr);

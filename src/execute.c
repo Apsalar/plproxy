@@ -611,6 +611,10 @@ poll_conns(ProxyFunction *func, ProxyCluster *cluster)
 	int numfds = 0;
 	int ev = 0;
 
+#ifdef PLPROXY_DTRACE
+    PLPROXY_PROXY_POLLSTART(func->cur_cluster->txid);
+#endif
+
 	if (pfd_allocated < cluster->active_count)
 	{
 		struct pollfd *tmp;
@@ -660,11 +664,21 @@ poll_conns(ProxyFunction *func, ProxyCluster *cluster)
 	/* wait for events */
 	res = poll(pfd_cache, numfds, 1000);
 	if (res == 0)
+    {
+#ifdef PLPROXY_DTRACE
+        PLPROXY_PROXY_POLLNONE(func->cur_cluster->txid);
+#endif
 		return 0;
+    }
 	if (res < 0)
 	{
 		if (errno == EINTR)
+        {
+#ifdef PLPROXY_DTRACE
+            PLPROXY_PROXY_POLLINTR(func->cur_cluster->txid);
+#endif
 			return 0;
+        }
 		plproxy_error(func, "poll() failed: %s", strerror(errno));
 	}
 
@@ -701,6 +715,9 @@ poll_conns(ProxyFunction *func, ProxyCluster *cluster)
 
 		pf++;
 	}
+#ifdef PLPROXY_DTRACE
+    PLPROXY_PROXY_POLLDONE(func->cur_cluster->txid);
+#endif
 	return 1;
 }
 
@@ -723,11 +740,18 @@ check_timeouts(ProxyFunction *func, ProxyCluster *cluster, ProxyConnection *conn
 
 		case C_QUERY_READ:
 		case C_QUERY_WRITE:
-			if (cf->query_timeout <= 0)
-				break;
-			if (now - conn->cur->query_time <= cf->query_timeout)
-				break;
-			plproxy_error(func, "query timeout");
+            if (conn->cur->waitCancel &&
+                cf->waitcancel_timeout > 0 &&
+                now - conn->cur->cancel_time > cf->waitcancel_timeout)
+            {
+                plproxy_error(func, "waitCancel timeout");
+                break;
+            }
+            if (cf->query_timeout <= 0)
+                break;
+            if (now - conn->cur->query_time <= cf->query_timeout)
+                break;
+            plproxy_error(func, "query timeout");
 			break;
 		default:
 			break;
@@ -903,6 +927,7 @@ remote_cancel(ProxyFunction *func)
 	char errbuf[256];
 	int ret;
 	int i;
+	struct timeval now;
 
 	if (cluster == NULL)
 		return;
@@ -946,6 +971,8 @@ remote_cancel(ProxyFunction *func)
                                              (char *) conn->connstr);
 #endif
 					conn->cur->waitCancel = 1;
+                    gettimeofday(&now, NULL);
+                    conn->cur->cancel_time = now.tv_sec;
 				break;
 		}
 	}
