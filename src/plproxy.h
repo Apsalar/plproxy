@@ -187,6 +187,7 @@ typedef struct ProxyConfig
 	int			keepidle;
 	int			keepintvl;
 	int			keepcnt;
+	int			waitcancel_timeout;		/* How long to wait for cancel rsp */
 	char		default_user[NAMEDATALEN];
 } ProxyConfig;
 
@@ -210,6 +211,7 @@ typedef struct ProxyConnectionState {
 	ConnState	state;			/* Connection state */
 	time_t		connect_time;	/* When connection was started */
 	time_t		query_time;		/* When last query was sent */
+	time_t		cancel_time;	/* When query was canceled */
 	bool		same_ver;		/* True if dest backend has same X.Y ver */
 	bool		tuning;			/* True if tuning query is running on conn */
 	bool		waitCancel;		/* True if waiting for answer from cancel */

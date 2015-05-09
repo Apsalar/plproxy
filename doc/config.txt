@@ -161,6 +161,10 @@ or NULL then the parameter is disabled (a default value will be used).
 	with same name.  Its better to just add the parameter to
 	connect string.
 
+  waitcancel_timeout::
+
+	The maximum seconds to wait for cancel responses from the remote nodes.
+
   default_user::
 
 	Either `current_user` (default) or `session_user`.  They have same

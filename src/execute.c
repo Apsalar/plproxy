@@ -694,6 +694,13 @@ check_timeouts(ProxyFunction *func, ProxyCluster *cluster, ProxyConnection *conn
 
 		case C_QUERY_READ:
 		case C_QUERY_WRITE:
+			if (conn->cur->waitCancel &&
+				cf->waitcancel_timeout > 0 &&
+				now - conn->cur->cancel_time > cf->waitcancel_timeout)
+			{
+				plproxy_error(func, "waitCancel timeout");
+				break;
+			}
 			if (cf->query_timeout <= 0)
 				break;
 			if (now - conn->cur->query_time <= cf->query_timeout)
@@ -850,6 +857,7 @@ remote_cancel(ProxyFunction *func)
 	char errbuf[256];
 	int ret;
 	int i;
+    struct timeval now;
 
 	if (cluster == NULL)
 		return;
@@ -880,7 +888,11 @@ remote_cancel(ProxyFunction *func)
 				if (ret == 0)
 					elog(NOTICE, "Cancel query failed!");
 				else
+				{
+					gettimeofday(&now, NULL);
+					conn->cur->cancel_time = now.tv_sec;
 					conn->cur->waitCancel = 1;
+				}
 				break;
 		}
 	}

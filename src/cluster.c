@@ -71,6 +71,7 @@ static const char *cluster_config_options[] = {
 	"keepalive_idle",
 	"keepalive_interval",
 	"keepalive_count",
+	"waitcancel_timeout",
 	NULL
 };
 
@@ -313,6 +314,8 @@ set_config_key(ProxyFunction *func, ProxyConfig *cf, const char *key, const char
 		cf->keepintvl = atoi(val);
 	else if (pg_strcasecmp("keepalive_count", key) == 0)
 		cf->keepcnt = atoi(val);
+	else if (pg_strcasecmp("waitcancel_timeout", key) == 0)
+		cf->waitcancel_timeout = atoi(val);
 	else if (pg_strcasecmp("default_user", key) == 0)
 		snprintf(cf->default_user, sizeof(cf->default_user), "%s", val);
 	else
