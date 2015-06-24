@@ -966,6 +966,7 @@ remote_cancel(ProxyFunction *func)
 				if (ret == 0)
 					elog(NOTICE, "Cancel query failed!");
 				else
+                {
 #ifdef PLPROXY_DTRACE
                     PLPROXY_SHARD_CANCELWAIT(conn->cluster->txid,
                                              (char *) conn->connstr);
@@ -973,6 +974,7 @@ remote_cancel(ProxyFunction *func)
 					conn->cur->waitCancel = 1;
                     gettimeofday(&now, NULL);
                     conn->cur->cancel_time = now.tv_sec;
+                }
 				break;
 		}
 	}
