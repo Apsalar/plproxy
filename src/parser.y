@@ -19,9 +19,7 @@
  */
 
 #include "plproxy.h"
-
-/* define scanner.c functions */
-void plproxy_yy_scan_bytes(const char *bytes, int len);
+#include "scanner.h"
 
 /* avoid permanent allocations */
 #define YYMALLOC palloc
@@ -55,6 +53,13 @@ static void reset_parser_vars(void)
 
 %}
 
+/*
+ * Preferred syntax in Bison 2.0+ is [%name-prefix "plproxy_yy"].
+ *
+ * Keep using old syntax to keep compatibility with
+ * same range of Bison versions that are supported also
+ * by PostgreSQL.
+ */
 %name-prefix="plproxy_yy"
 
 %token <str> CONNECT CLUSTER RUN ON ALL ANY SELECT
