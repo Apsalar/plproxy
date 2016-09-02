@@ -153,6 +153,10 @@ or NULL then the parameter is disabled (a default value will be used).
 
   The maximum seconds to wait for cancel responses from the remote nodes.
 
+* `telemetry`
+
+  The address (in the form hostname:port) of the UDP telemetry server.
+
 * `default_user`
 
   Either `current_user` (default) or `session_user`.  They have same

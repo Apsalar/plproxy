@@ -216,6 +216,8 @@ typedef struct ProxyConnectionState {
 	bool		same_ver;		/* True if dest backend has same X.Y ver */
 	bool		tuning;			/* True if tuning query is running on conn */
 	bool		waitCancel;		/* True if waiting for answer from cancel */
+	instr_time	start_t;		/* query start time in microseconds */
+	instr_time	conn_t;
 } ProxyConnectionState;
 
 /* Single database connection */
@@ -291,6 +293,7 @@ typedef struct ProxyCluster
 
 	/* notice processing: provide info about currently executing function */
 	struct ProxyFunction	*cur_func;
+	uint64_t		txid;
 } ProxyCluster;
 
 /*
@@ -435,6 +438,20 @@ typedef struct ProxyFunction
 	int		   *result_map;
 } ProxyFunction;
 
+/*
+ * Detailed telemetry
+ */
+typedef struct Telemetry
+{
+	long	   serial;
+  	long	   conn_time;
+  	long	   conn_age;
+	long	   total_time;
+	int	   funcname_len;
+	int	   hostname_len;
+	int	   partition;
+} Telemetry;
+
 /* main.c */
 Datum		plproxy_call_handler(PG_FUNCTION_ARGS);
 Datum		plproxy_validator(PG_FUNCTION_ARGS);
@@ -502,4 +519,12 @@ void		plproxy_query_exec(ProxyFunction *func, FunctionCallInfo fcinfo, ProxyQuer
 							   DatumArray **array_params, int array_row);
 void		plproxy_query_freeplan(ProxyQuery *q);
 
+void		set_telemetry_socket(const char *val);
 #endif
+
+
+/* Local Variables:  */
+/* mode: c           */
+/* indent-tabs-mode: 't  */
+/* c-basic-offset: 8  */
+/* End:              */

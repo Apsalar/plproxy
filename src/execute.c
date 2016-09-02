@@ -48,6 +48,9 @@
 #include <arpa/inet.h>
 #endif
 
+#ifndef WIN32
+#include <unistd.h>
+#endif
 
 #if PG_VERSION_NUM < 80400
 static int geterrcode(void)
@@ -402,6 +405,7 @@ prepare_conn(ProxyFunction *func, ProxyConnection *conn)
 	gettimeofday(&now, NULL);
 
 	conn->cur->waitCancel = 0;
+        INSTR_TIME_SET_CURRENT(conn->cur->start_t);
 
 	/* state should be C_READY or C_NONE */
 	switch (conn->cur->state)
@@ -424,6 +428,7 @@ prepare_conn(ProxyFunction *func, ProxyConnection *conn)
 	}
 
 	conn->cur->connect_time = now.tv_sec;
+	INSTR_TIME_SET_CURRENT(conn->cur->conn_t);
 
 	/* launch new connection */
 	connstr = get_connstr(conn);
@@ -441,6 +446,78 @@ prepare_conn(ProxyFunction *func, ProxyConnection *conn)
 	PQsetNoticeReceiver(conn->cur->db, handle_notice, conn);
 
 	setup_keepalive(conn);
+}
+
+
+/* Apsalar telemetry */
+static int 		telemetry_socket;	/* UDP telemetry socket */
+static struct addrinfo	*telemetry_addr;	/* UDP telemetry address */
+
+void
+set_telemetry_socket(const char *val)
+{
+	int status;
+        char *s, buf[256];
+        struct addrinfo hints;
+	
+	if (telemetry_socket > 0) return;
+
+	strncpy(buf, val, 255);
+	buf[255] = '\0';
+  
+	s = strchr(buf, ':');
+	if (s) {
+		*s++ = '\0';
+	} else {
+		s = "4480";
+	}
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_flags = AI_PASSIVE;
+	hints.ai_family = AF_INET;
+	hints.ai_socktype = SOCK_DGRAM;
+	status = getaddrinfo(buf, s, &hints, &telemetry_addr);
+	if (status == 0) {
+		telemetry_socket = socket(PF_INET, SOCK_DGRAM, 0);
+	}
+}	
+
+static void
+send_telemetry(ProxyFunction *func, ProxyConnection *conn)
+{
+	char buf[1500];
+	Telemetry *data = (Telemetry *) buf;
+	instr_time now;
+	int i;
+	
+	if (!telemetry_socket) return;
+
+	INSTR_TIME_SET_CURRENT(now);
+
+	data->partition = -1;
+	for (i=0; i<func->cur_cluster->part_count; i++) {
+		if (func->cur_cluster->part_map[i] == conn) {
+			data->partition = i;
+			break;
+		}
+	}
+	
+	data->serial = func->cur_cluster->txid;
+	data->conn_time = INSTR_TIME_GET_MICROSEC(conn->cur->conn_t) - INSTR_TIME_GET_MICROSEC(conn->cur->start_t);
+	if (data->conn_time < 0) {
+		data->conn_age = - data->conn_time;
+		data->conn_time = 0;
+	} else {
+		data->conn_age = 0;
+	}
+	data->total_time = INSTR_TIME_GET_MICROSEC(now) - INSTR_TIME_GET_MICROSEC(conn->cur->start_t);
+	data->funcname_len = strlen(func->name);
+	if (data->funcname_len > 256) data->funcname_len = 256;
+	strncpy(buf + sizeof(Telemetry), func->name, data->funcname_len);
+	gethostname(buf + sizeof(Telemetry) + data->funcname_len, 256);
+	data->hostname_len = strlen(buf + sizeof(Telemetry) + data->funcname_len);
+	sendto(telemetry_socket, &buf,
+	       sizeof(Telemetry) + data->funcname_len + data->hostname_len, 0,
+	       telemetry_addr->ai_addr, (int) telemetry_addr->ai_addrlen);
 }
 
 /*
@@ -462,7 +539,10 @@ another_result(ProxyFunction *func, ProxyConnection *conn)
 		if (conn->cur->tuning)
 			conn->cur->state = C_READY;
 		else
+                {
 			conn->cur->state = C_DONE;
+			send_telemetry(func, conn);
+                }
 		return false;
 	}
 
@@ -1255,6 +1335,15 @@ void plproxy_disconnect(ProxyConnectionState *cur)
 	cur->same_ver = 0;
 	cur->tuning = 0;
 	cur->waitCancel = 0;
+        INSTR_TIME_SET_ZERO(cur->start_t);
+        INSTR_TIME_SET_ZERO(cur->conn_t);
+}
+
+static uint64_t
+mktxid()
+{
+	static uint64_t txid = 0;
+	return ++txid;
 }
 
 /* Select partitions and execute query on them */
@@ -1267,7 +1356,8 @@ plproxy_exec(ProxyFunction *func, FunctionCallInfo fcinfo)
 	 */
 	PG_TRY();
 	{
-		func->cur_cluster->busy = true;
+		func->cur_cluster->txid = mktxid();
+ 		func->cur_cluster->busy = true;
 		func->cur_cluster->cur_func = func;
 
 		/* clean old results */
@@ -1298,4 +1388,8 @@ plproxy_exec(ProxyFunction *func, FunctionCallInfo fcinfo)
 	PG_END_TRY();
 }
 
-
+/* Local Variables:  */
+/* mode: c           */
+/* indent-tabs-mode: 't  */
+/* c-basic-offset: 8  */
+/* End:              */

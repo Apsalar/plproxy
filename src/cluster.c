@@ -72,6 +72,7 @@ static const char *cluster_config_options[] = {
 	"keepalive_interval",
 	"keepalive_count",
 	"waitcancel_timeout",
+	"telemetry",
 	NULL
 };
 
@@ -316,6 +317,8 @@ set_config_key(ProxyFunction *func, ProxyConfig *cf, const char *key, const char
 		cf->keepcnt = atoi(val);
 	else if (pg_strcasecmp("waitcancel_timeout", key) == 0)
 		cf->waitcancel_timeout = atoi(val);
+	else if (pg_strcasecmp("telemetry", key) == 0)
+		set_telemetry_socket(val);
 	else if (pg_strcasecmp("default_user", key) == 0)
 		snprintf(cf->default_user, sizeof(cf->default_user), "%s", val);
 	else
@@ -470,7 +473,7 @@ validate_cluster_option(const char *name, const char *arg)
 
 	if (*opt == NULL)
 		elog(ERROR, "Pl/Proxy: invalid server option: %s", name);
-	else if (strspn(arg, "0123456789") != strlen(arg))
+	else if (pg_strcasecmp(*opt, "telemetry") != 0 && strspn(arg, "0123456789") != strlen(arg))
 		elog(ERROR, "Pl/Proxy: only integer options are allowed: %s=%s",
 			 name, arg);
 }
@@ -1293,3 +1296,9 @@ plproxy_cluster_maint(struct timeval * now)
 	aatree_walk(&fake_cluster_tree, AA_WALK_IN_ORDER, clean_cluster, now);
 }
 
+
+/* Local Variables:  */
+/* mode: c           */
+/* indent-tabs-mode: 't  */
+/* c-basic-offset: 8  */
+/* End:              */
