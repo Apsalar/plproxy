@@ -452,6 +452,8 @@ prepare_conn(ProxyFunction *func, ProxyConnection *conn)
 /* Apsalar telemetry */
 static int 		telemetry_socket;	/* UDP telemetry socket */
 static struct addrinfo	*telemetry_addr;	/* UDP telemetry address */
+static char 		*telemetry_hostname;
+static int		hostname_len;
 
 void
 set_telemetry_socket(const char *val)
@@ -479,6 +481,11 @@ set_telemetry_socket(const char *val)
 	if (status == 0) {
 		telemetry_socket = socket(PF_INET, SOCK_DGRAM, 0);
 	}
+	gethostname(buf, 255);
+	s = strchr(buf, '.');
+	if (s) *s = '\0';
+	hostname_len = strlen(buf);
+	telemetry_hostname = strdup(buf);
 }	
 
 static void
@@ -513,8 +520,9 @@ send_telemetry(ProxyFunction *func, ProxyConnection *conn)
 	data->funcname_len = strlen(func->name);
 	if (data->funcname_len > 256) data->funcname_len = 256;
 	strncpy(buf + sizeof(Telemetry), func->name, data->funcname_len);
-	gethostname(buf + sizeof(Telemetry) + data->funcname_len, 256);
-	data->hostname_len = strlen(buf + sizeof(Telemetry) + data->funcname_len);
+	strncpy(buf + sizeof(Telemetry) + data->funcname_len,
+		telemetry_hostname, hostname_len);
+	data->hostname_len = hostname_len;
 	sendto(telemetry_socket, &buf,
 	       sizeof(Telemetry) + data->funcname_len + data->hostname_len, 0,
 	       telemetry_addr->ai_addr, (int) telemetry_addr->ai_addrlen);
