@@ -1,6 +1,27 @@
 
 # PL/Proxy Changelog
 
+**2017-10-08  -  PL/Proxy 2.8  -  "Entropy Always Wins"**
+
+- Fixes:
+
+  * PG10: Support more than one digit versions in Makefile.
+    (Luis Bosque)
+
+  * PG10: Use TupleDescAttr() to handle changed type in tupdesc.
+
+  * Use corrent <sys/socket.h> detection macro.
+    (Christoph Moench-Tegeder)
+
+**2016-12-27  -  PL/Proxy 2.7  -  "Never Trust Sober Santa"**
+
+- Fixes
+  * Update to newer `heap_form_tuple()` API.
+    (Peter Eisentraut)
+
+  * Handle 64-bit `SPI_processed`.
+    (Peter Eisentraut)
+
 **2015-08-26  -  PL/Proxy 2.6  -  "Released via Bottle Mail"**
 
 - Features
