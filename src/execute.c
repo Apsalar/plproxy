@@ -454,6 +454,7 @@ static int 		telemetry_socket;	/* UDP telemetry socket */
 static struct addrinfo	*telemetry_addr;	/* UDP telemetry address */
 static char 		*telemetry_hostname;
 static int		hostname_len;
+static long             telemetry_pid;
 
 void
 set_telemetry_socket(const char *val)
@@ -486,6 +487,7 @@ set_telemetry_socket(const char *val)
 	if (s) *s = '\0';
 	hostname_len = strlen(buf);
 	telemetry_hostname = strdup(buf);
+	telemetry_pid = (long) getpid();
 }	
 
 static void
@@ -500,6 +502,8 @@ send_telemetry(ProxyFunction *func, ProxyConnection *conn)
 
 	INSTR_TIME_SET_CURRENT(now);
 
+	data->pid = telemetry_pid;
+	data->magic = 0xdeadbeef00000002;
 	data->partition = -1;
 	for (i=0; i<func->cur_cluster->part_count; i++) {
 		if (func->cur_cluster->part_map[i] == conn) {

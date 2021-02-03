@@ -447,13 +447,15 @@ typedef struct ProxyFunction
  */
 typedef struct Telemetry
 {
-	long	   serial;
-  	long	   conn_time;
-  	long	   conn_age;
-	long	   total_time;
-	int	   funcname_len;
-	int	   hostname_len;
-	int	   partition;
+	unsigned long magic;
+	long          pid;
+	long	      serial;
+  	long	      conn_time; /* microseconds */
+  	long	      conn_age;
+	long	      total_time; /* microseconds */
+	int	      funcname_len;
+	int	      hostname_len;
+	int	      partition;
 } Telemetry;
 
 /* main.c */
