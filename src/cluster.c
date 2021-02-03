@@ -1,8 +1,7 @@
 /*
  * PL/Proxy - easy access to partitioned database.
  *
- * Copyright (c) 2006 Sven Suursoho, Skype Technologies OÜ
- * Copyright (c) 2007 Marko Kreen, Skype Technologies OÜ
+ * Copyright (c) 2006-2020 PL/Proxy Authors
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -60,14 +59,14 @@ static const char part_sql[] = "select * from plproxy.get_cluster_partitions($1)
 /* query for fetching cluster config */
 static const char config_sql[] = "select * from plproxy.get_cluster_config($1)";
 
-#ifdef PLPROXY_USE_SQLMED
-
 /* list of all the valid configuration options to plproxy cluster */
 static const char *cluster_config_options[] = {
 	"statement_timeout",
 	"connection_lifetime",
 	"query_timeout",
 	"disable_binary",
+	"modular_mapping",
+	/* deprecated */
 	"keepalive_idle",
 	"keepalive_interval",
 	"keepalive_count",
@@ -79,14 +78,14 @@ static const char *cluster_config_options[] = {
 extern Datum plproxy_fdw_validator(PG_FUNCTION_ARGS);
 PG_FUNCTION_INFO_V1(plproxy_fdw_validator);
 
-#endif
-
 /*
  * Connection count should be non-zero and power of 2.
  */
 static bool
-check_valid_partcount(int n)
+check_valid_partcount(int n, int modular_mapping)
 {
+	if (modular_mapping)
+		return n > 0;
 	return (n > 0) && !(n & (n - 1));
 }
 
@@ -166,9 +165,7 @@ plproxy_cluster_cache_init(void)
 
 	cluster_mem = AllocSetContextCreate(TopMemoryContext,
 										"PL/Proxy cluster context",
-										ALLOCSET_SMALL_MINSIZE,
-										ALLOCSET_SMALL_INITSIZE,
-										ALLOCSET_SMALL_MAXSIZE);
+										ALLOCSET_SMALL_SIZES);
 	aatree_init(&cluster_tree, cluster_name_cmp, NULL);
 	aatree_init(&fake_cluster_tree, cluster_name_cmp, NULL);
 }
@@ -256,6 +253,11 @@ add_connection(ProxyCluster *cluster, const char *connstr, int part_num)
 
 		aatree_insert(&cluster->conn_tree, (uintptr_t)connstr, &conn->node);
 	}
+	if (cluster->part_map[part_num])
+		ereport(ERROR,
+			(errcode(ERRCODE_SYNTAX_ERROR),
+			 errmsg("Pl/Proxy: duplicate partition in config: %d", part_num),
+			 errhint("already got number %d", part_num)));
 
 	cluster->part_map[part_num] = conn;
 }
@@ -301,6 +303,7 @@ clear_config(ProxyConfig *cf)
 static void
 set_config_key(ProxyFunction *func, ProxyConfig *cf, const char *key, const char *val)
 {
+	static int did_warn = 0;
 	if (pg_strcasecmp(key, "statement_timeout") == 0)
 		/* ignore */ ;
 	else if (pg_strcasecmp("connection_lifetime", key) == 0)
@@ -309,18 +312,23 @@ set_config_key(ProxyFunction *func, ProxyConfig *cf, const char *key, const char
 		cf->query_timeout = atoi(val);
 	else if (pg_strcasecmp("disable_binary", key) == 0)
 		cf->disable_binary = atoi(val);
-	else if (pg_strcasecmp("keepalive_idle", key) == 0)
-		cf->keepidle = atoi(val);
-	else if (pg_strcasecmp("keepalive_interval", key) == 0)
-		cf->keepintvl = atoi(val);
-	else if (pg_strcasecmp("keepalive_count", key) == 0)
-		cf->keepcnt = atoi(val);
+	else if (pg_strcasecmp("modular_mapping", key) == 0)
+		cf->modular_mapping = atoi(val);
+	else if (pg_strcasecmp("keepalive_idle", key) == 0
+		|| pg_strcasecmp("keepalive_interval", key) == 0
+		|| pg_strcasecmp("keepalive_count", key) == 0)
+	{
+		if (atoi(val) > 0 && !did_warn) {
+			did_warn = 1;
+			elog(WARNING, "Use libpq keepalive options, PL/Proxy keepalive options not supported");
+		}
+	}
+	else if (pg_strcasecmp("default_user", key) == 0)
+		snprintf(cf->default_user, sizeof(cf->default_user), "%s", val);
 	else if (pg_strcasecmp("waitcancel_timeout", key) == 0)
 		cf->waitcancel_timeout = atoi(val);
 	else if (pg_strcasecmp("telemetry", key) == 0)
 		set_telemetry_socket(val);
-	else if (pg_strcasecmp("default_user", key) == 0)
-		snprintf(cf->default_user, sizeof(cf->default_user), "%s", val);
 	else
 		plproxy_error(func, "Unknown config param: %s", key);
 }
@@ -406,7 +414,7 @@ reload_parts(ProxyCluster *cluster, Datum dname, ProxyFunction *func)
 	err = SPI_execute_plan(partlist_plan, &dname, NULL, false, 0);
 	if (err != SPI_OK_SELECT)
 		plproxy_error(func, "get_partlist: spi error");
-	if (!check_valid_partcount(SPI_processed))
+	if (!check_valid_partcount(SPI_processed, cluster->config.modular_mapping))
 		plproxy_error(func, "get_partlist: invalid part count");
 
 	/* check column types */
@@ -432,8 +440,6 @@ reload_parts(ProxyCluster *cluster, Datum dname, ProxyFunction *func)
 
 	return 0;
 }
-
-#ifdef PLPROXY_USE_SQLMED
 
 /* extract a partition number from foreign server option */
 static bool
@@ -489,7 +495,9 @@ plproxy_fdw_validator(PG_FUNCTION_ARGS)
 	List	   *options_list = untransformRelOptions(PG_GETARG_DATUM(0));
 	Oid			catalog = PG_GETARG_OID(1);
 	ListCell   *cell;
-	int			part_count = 0;
+	int			part_count = 0, part_num;
+	unsigned char *part_set = NULL;
+	int			modular_mapping = 0;
 
 	/* Pre 8.4.3 databases have broken validator interface, warn the user */
 	if (catalog == InvalidOid)
@@ -506,23 +514,33 @@ plproxy_fdw_validator(PG_FUNCTION_ARGS)
 	{
 		DefElem    *def = lfirst(cell);
 		char	   *arg = strVal(def->arg);
-		int			part_num;
 
 		if (catalog == ForeignServerRelationId)
 		{
 			if (extract_part_num(def->defname, &part_num))
 			{
-				/* partition definition */
-				if (part_num != part_count)
-					ereport(ERROR,
-							(errcode(ERRCODE_SYNTAX_ERROR),
-							 errmsg("Pl/Proxy: partitions must be numbered consecutively"),
-							 errhint("next valid partition number is %d", part_count)));
+				if (part_set == NULL)
+						part_set = palloc0(options_list->length + 1);
+
+				if (part_num < 0 || part_num >= options_list->length)
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("Pl/Proxy: partition numbers must start from 0 and be numbered consecutively"),
+								 errhint("number of options is %d, got %d",
+										 options_list->length, part_num)));
+				if (part_set[part_num])
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("Pl/Proxy: duplicate partition number: %d", part_num),
+								 errhint("got %d twice", part_num)));
+				part_set[part_num] = 1;
 				++part_count;
 			}
 			else
 			{
 				validate_cluster_option(def->defname, arg);
+				if (pg_strcasecmp(def->defname, "modular_mapping") == 0)
+					modular_mapping = atoi(arg);
 			}
 		}
 		else if (catalog == UserMappingRelationId)
@@ -545,14 +563,51 @@ plproxy_fdw_validator(PG_FUNCTION_ARGS)
 
 	if (catalog == ForeignServerRelationId)
 	{
-		if (!check_valid_partcount(part_count))
+		for (part_num = 0; part_num < part_count; part_num++) {
+			if (!part_set[part_num])
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("Pl/Proxy: missing partition"),
+						 errhint("missing number: %d", part_num)));
+		}
+		if (!check_valid_partcount(part_count, modular_mapping))
 			ereport(ERROR,
 					(errcode(ERRCODE_SYNTAX_ERROR),
 					 errmsg("Pl/Proxy: invalid number of partitions"),
 					 errhint("the number of partitions in a cluster must be power of 2 (attempted %d)", part_count)));
+
+		foreach(cell, options_list)
+		{
+			DefElem    *def = lfirst(cell);
+
+			if (!extract_part_num(def->defname, &part_num))
+				continue;
+
+			if (part_num < 0 || part_num >= part_count)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("Pl/Proxy: wrong partitions number - %d", part_num),
+						 errhint("the partitions number in a cluster must be >= 0 and < %d (attempted %d)", part_count, part_num)));
+		}
 	}
 
+	if (part_set)
+		pfree(part_set);
+
 	PG_RETURN_BOOL(true);
+}
+
+void
+plproxy_append_cstr_option(StringInfo cstr, const char *name, const char *val)
+{
+	/* apply libpq connect string quoting */
+	appendStringInfo(cstr, " %s='", name);
+	for (; *val; val++) {
+		if (*val == '\'' || *val == '\\')
+			appendStringInfoChar(cstr, '\\');
+		appendStringInfoChar(cstr, *val);
+	}
+	appendStringInfoChar(cstr, '\'');
 }
 
 static void
@@ -566,16 +621,17 @@ reload_sqlmed_user(ProxyFunction *func, ProxyCluster *cluster)
 	ListCell		   *cell;
 	AclResult			aclresult;
 	bool				got_user;
+	Oid				umid;
 
 
 	um = GetUserMapping(userinfo->user_oid, cluster->sqlmed_server_oid);
 
 	/* retry same lookup so we can set cache stamp... */
-    tup = SearchSysCache(USERMAPPINGUSERSERVER,
+	tup = SearchSysCache(USERMAPPINGUSERSERVER,
 						 ObjectIdGetDatum(um->userid),
 						 ObjectIdGetDatum(um->serverid),
 						 0, 0);
-    if (!HeapTupleIsValid(tup))
+	if (!HeapTupleIsValid(tup))
 	{
 		/* Specific mapping not found, try PUBLIC */
 		tup = SearchSysCache(USERMAPPINGUSERSERVER,
@@ -586,7 +642,13 @@ reload_sqlmed_user(ProxyFunction *func, ProxyCluster *cluster)
 			elog(ERROR, "cache lookup failed for user mapping (%u,%u)",
 				um->userid, um->serverid);
 	}
-	scstamp_set(USERMAPPINGOID, &userinfo->umStamp, tup);
+
+#if PG_VERSION_NUM >= 90600
+	umid = um->umid;
+#else
+	umid = HeapTupleGetOid(tup);
+#endif
+	scstamp_set(USERMAPPINGOID, &userinfo->umStamp, umid);
 	ReleaseSysCache(tup);
 
 	/*
@@ -606,12 +668,12 @@ reload_sqlmed_user(ProxyFunction *func, ProxyCluster *cluster)
 		if (strcmp(def->defname, "user") == 0)
 			got_user = true;
 
-		appendStringInfo(&cstr, " %s='%s'", def->defname, strVal(def->arg));
+		plproxy_append_cstr_option(&cstr, def->defname, strVal(def->arg));
 	}
 
 	/* make sure we have 'user=' in connect string */
 	if (!got_user)
-		appendStringInfo(&cstr, " user='%s'", userinfo->username);
+		plproxy_append_cstr_option(&cstr, "user", userinfo->username);
 
 	/* free old string */
 	if (userinfo->extra_connstr)
@@ -641,6 +703,8 @@ reload_sqlmed_cluster(ProxyFunction *func, ProxyCluster *cluster,
 	ListCell		   *cell;
 	int					part_count = 0;
 	int					part_num;
+	int					i;
+	char			  **part_ordered;
 
 
 	fdw = GetForeignDataWrapper(foreign_server->fdwid);
@@ -648,14 +712,14 @@ reload_sqlmed_cluster(ProxyFunction *func, ProxyCluster *cluster,
 	/*
 	 * Look up the server and user mapping TIDs for handling syscache invalidations.
 	 */
-    tup = SearchSysCache(FOREIGNSERVEROID,
+	tup = SearchSysCache(FOREIGNSERVEROID,
 						 ObjectIdGetDatum(foreign_server->serverid),
 						 0, 0, 0);
 
-    if (!HeapTupleIsValid(tup))
-        elog(ERROR, "cache lookup failed for foreign server %u", foreign_server->serverid);
+	if (!HeapTupleIsValid(tup))
+		elog(ERROR, "cache lookup failed for foreign server %u", foreign_server->serverid);
 
-	scstamp_set(FOREIGNSERVEROID, &cluster->clusterStamp, tup);
+	scstamp_set(FOREIGNSERVEROID, &cluster->clusterStamp, foreign_server->serverid);
 	ReleaseSysCache(tup);
 
 	/*
@@ -689,16 +753,13 @@ reload_sqlmed_cluster(ProxyFunction *func, ProxyCluster *cluster,
 
 		if (extract_part_num(def->defname, &part_num))
 		{
-			if (part_num != part_count)
-				plproxy_error(func, "partitions numbers must be consecutive");
-
 			part_count++;
 		}
 		else
 			set_config_key(func, &cluster->config, def->defname, strVal(def->arg));
 	}
 
-	if (!check_valid_partcount(part_count))
+	if (!check_valid_partcount(part_count, cluster->config.modular_mapping))
 		plproxy_error(func, "invalid partition count");
 
 	/*
@@ -707,15 +768,31 @@ reload_sqlmed_cluster(ProxyFunction *func, ProxyCluster *cluster,
 	 */
 	allocate_cluster_partitions(cluster, part_count);
 
+	part_ordered = palloc0(part_count * sizeof(char *));
+
 	foreach(cell, foreign_server->options)
 	{
 		DefElem    *def = lfirst(cell);
+		char	   *arg = strVal(def->arg);
 
 		if (!extract_part_num(def->defname, &part_num))
 			continue;
 
-		add_connection(cluster, strVal(def->arg), part_num);
+		if (part_num < 0 || part_num >= part_count)
+			plproxy_error(func, "wrong partitions number, must be >= 0 and < %d", part_count);
+
+		if (part_ordered[part_num])
+			plproxy_error(func, "duplicate partition number: %d", part_num);
+
+		part_ordered[part_num] = arg;
 	}
+
+	for(i = 0; i < part_count; i++)
+	{
+		add_connection(cluster, part_ordered[i], i);
+	}
+
+	pfree(part_ordered);
 }
 
 /*
@@ -736,7 +813,7 @@ determine_compat_mode(ProxyCluster *cluster)
 	tup = SearchSysCache(NAMESPACENAME, PointerGetDatum("plproxy"), 0, 0, 0);
 	if (HeapTupleIsValid(tup))
 	{
-		Oid 		namespaceId = HeapTupleGetOid(tup);
+		Oid 		namespaceId = XNamespaceTupleGetOid(tup);
 		Oid			paramOids[] = { TEXTOID };
 		oidvector	*parameterTypes = buildoidvector(paramOids, 1);
 		const char	**funcname;
@@ -844,13 +921,6 @@ plproxy_syscache_callback_init(void)
 	CacheRegisterSyscacheCallback(USERMAPPINGOID, ClusterSyscacheCallback, (Datum) 0);
 }
 
-#else /* !PLPROXY_USE_SQLMED */
-
-void plproxy_syscache_callback_init(void) {}
-
-#endif
-
-
 
 /*
  * Reload the cluster configuration and partitions from plproxy.get_cluster*
@@ -870,8 +940,8 @@ reload_plproxy_cluster(ProxyFunction *func, ProxyCluster *cluster)
 	/* update if needed */
 	if (cur_version != cluster->version || cluster->needs_reload)
 	{
-		reload_parts(cluster, dname, func);
 		get_config(cluster, dname, func);
+		reload_parts(cluster, dname, func);
 		cluster->version = cur_version;
 	}
 }
@@ -899,7 +969,6 @@ new_cluster(const char *name)
 /*
  * Invalidate all connections for particular user
  */
-#ifdef PLPROXY_USE_SQLMED
 
 static void inval_userinfo_state(struct AANode *node, void *arg)
 {
@@ -929,8 +998,6 @@ static void inval_user_connections(ProxyCluster *cluster, ConnUserInfo *userinfo
 	 */
 	userinfo->needs_reload = false;
 }
-
-#endif
 
 /*
  * Initialize user info struct
@@ -968,23 +1035,6 @@ get_userinfo(ProxyCluster *cluster, Oid user_oid)
 
 	return userinfo;
 }
-
-#if PG_VERSION_NUM < 90100
-
-static Oid
-get_role_oid(const char *rolname, bool missing_ok)
-{
-	Oid         oid;
-
-	oid = GetSysCacheOid(AUTHNAME, CStringGetDatum(rolname), 0, 0, 0);
-	if (!OidIsValid(oid) && !missing_ok)
-		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_OBJECT),
-				 errmsg("role \"%s\" does not exist", rolname)));
-	return oid;
-}
-
-#endif
 
 /*
  * Refresh the cluster.
@@ -1024,7 +1074,6 @@ refresh_cluster(ProxyFunction *func, ProxyCluster *cluster)
 	cluster->cur_userinfo = uinfo;
 
 	/* SQL/MED server reload */
-#ifdef PLPROXY_USE_SQLMED
 	if (cluster->needs_reload)
 	{
 		ForeignServer *server;
@@ -1046,19 +1095,15 @@ refresh_cluster(ProxyFunction *func, ProxyCluster *cluster)
 		}
 	}
 
-#endif
-
 	/* SQL/MED user reload */
 	if (uinfo->needs_reload)
 	{
-#ifdef PLPROXY_USE_SQLMED
 		if (cluster->sqlmed_cluster)
 		{
 			inval_user_connections(cluster, uinfo);
 			reload_sqlmed_user(func, cluster);
 		}
 		else
-#endif
 			uinfo->needs_reload = false;
 	}
 
@@ -1096,8 +1141,8 @@ fake_cluster(ProxyFunction *func, const char *connect_str)
 	cluster->version = 1;
 	cluster->part_count = 1;
 	cluster->part_mask = 0;
-	cluster->part_map = palloc(cluster->part_count * sizeof(ProxyConnection *));
-	cluster->active_list = palloc(cluster->part_count * sizeof(ProxyConnection *));
+	cluster->part_map = palloc0(cluster->part_count * sizeof(ProxyConnection *));
+	cluster->active_list = palloc0(cluster->part_count * sizeof(ProxyConnection *));
 
 	MemoryContextSwitchTo(old_ctx);
 

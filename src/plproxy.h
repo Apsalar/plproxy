@@ -1,8 +1,7 @@
 /*
  * PL/Proxy - easy access to partitioned database.
  *
- * Copyright (c) 2006 Sven Suursoho, Skype Technologies OÜ
- * Copyright (c) 2007 Marko Kreen, Skype Technologies OÜ
+ * Copyright (c) 2006-2020 PL/Proxy Authors
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -31,18 +30,13 @@
 #include <fmgr.h>
 #include <executor/spi.h>
 
-#if PG_VERSION_NUM >= 80400
-#define PLPROXY_USE_SQLMED
 #include <foreign/foreign.h>
 #include <catalog/pg_foreign_data_wrapper.h>
 #include <catalog/pg_foreign_server.h>
 #include <catalog/pg_user_mapping.h>
-#endif
 
-#if PG_VERSION_NUM >= 90300
+#include <access/hash.h>
 #include <access/htup_details.h>
-#endif
-
 #include <access/reloptions.h>
 #include <access/tupdesc.h>
 #include <catalog/pg_namespace.h>
@@ -57,7 +51,7 @@
 #include <utils/array.h>
 #include <utils/builtins.h>
 #include <utils/hsearch.h>
-#include "utils/inval.h"
+#include <utils/inval.h>
 #include <utils/lsyscache.h>
 #include <utils/memutils.h>
 #include <utils/syscache.h>
@@ -65,9 +59,8 @@
 #include "aatree.h"
 #include "rowstamp.h"
 
-
-#ifndef PG_MODULE_MAGIC
-#error PL/Proxy requires 8.2+
+#if PG_VERSION_NUM < 90300
+#error PL/Proxy requires 9.3+
 #endif
 
 /* give offset of a field inside struct */
@@ -81,66 +74,11 @@
 #endif
 
 /*
- * backwards compat with 8.2
+ * backwards compatibility with v10.
  */
-#ifndef VARDATA_ANY
-#define VARDATA_ANY(x) VARDATA(x)
-#endif
-#ifndef VARSIZE_ANY_EXHDR
-#define VARSIZE_ANY_EXHDR(x) (VARSIZE(x) - VARHDRSZ)
-#endif
-#ifndef PG_DETOAST_DATUM_PACKED
-#define PG_DETOAST_DATUM_PACKED(x) PG_DETOAST_DATUM(x)
-#endif
 
-#ifndef PG_PRINTF_ATTRIBUTE
-#ifdef WIN32
-#define PG_PRINTF_ATTRIBUTE gnu_printf
-#else
-#define PG_PRINTF_ATTRIBUTE printf
-#endif
-#endif
-
-/*
- * backwards compat with 8.4
- */
-#ifndef PROARGMODE_IN
-#define PROARGMODE_IN       'i'
-#endif
-#ifndef PROARGMODE_OUT
-#define PROARGMODE_OUT      'o'
-#endif
-#ifndef PROARGMODE_INOUT
-#define PROARGMODE_INOUT    'b'
-#endif
-#ifndef PROARGMODE_VARIADIC
-#define PROARGMODE_VARIADIC 'v'
-#endif
-#ifndef PROARGMODE_TABLE
-#define PROARGMODE_TABLE    't'
-#endif
-
-#ifndef TYPTYPE_BASE
-#define TYPTYPE_BASE 'b'
-#endif
-#ifndef TYPTYPE_COMPOSITE
-#define TYPTYPE_COMPOSITE 'c'
-#endif
-#ifndef TYPTYPE_DOMAIN
-#define TYPTYPE_DOMAIN 'd'
-#endif
-#ifndef TYPTYPE_ENUM
-#define TYPTYPE_ENUM 'e'
-#endif
-#ifndef TYPTYPE_PSEUDO
-#define TYPTYPE_PSEUDO 'p'
-#endif
-#ifndef TYPTYPE_RANGE
-#define TYPTYPE_RANGE 'r'
-#endif
-
-#ifndef TupleDescAttr
-#define TupleDescAttr(tupdesc, i) ((tupdesc)->attrs[(i)])
+#if PG_VERSION_NUM >= 110000
+#define ACL_KIND_FOREIGN_SERVER OBJECT_FOREIGN_SERVER
 #endif
 
 /*
@@ -188,10 +126,7 @@ typedef struct ProxyConfig
 	int			query_timeout;			/* How long query may take (secs) */
 	int			connection_lifetime;	/* How long the connection may live (secs) */
 	int			disable_binary;			/* Avoid binary I/O */
-	/* keepalive parameters */
-	int			keepidle;
-	int			keepintvl;
-	int			keepcnt;
+	int			modular_mapping;		/* Use modulus (%) instead masking (&) */
 	int			waitcancel_timeout;		/* How long to wait for cancel rsp */
 	char		default_user[NAMEDATALEN];
 } ProxyConfig;
@@ -508,6 +443,7 @@ void		plproxy_syscache_callback_init(void);
 ProxyCluster *plproxy_find_cluster(ProxyFunction *func, FunctionCallInfo fcinfo);
 void		plproxy_cluster_maint(struct timeval * now);
 void		plproxy_activate_connection(struct ProxyConnection *conn);
+void		plproxy_append_cstr_option(StringInfo cstr, const char *name, const char *val);
 
 /* result.c */
 Datum		plproxy_result(ProxyFunction *func, FunctionCallInfo fcinfo);

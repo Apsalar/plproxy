@@ -1,8 +1,7 @@
 /*
  * PL/Proxy - easy access to partitioned database.
  *
- * Copyright (c) 2006 Sven Suursoho, Skype Technologies OÜ
- * Copyright (c) 2007 Marko Kreen, Skype Technologies OÜ
+ * Copyright (c) 2006-2020 PL/Proxy Authors
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -29,40 +28,13 @@
 
 #include <sys/time.h>
 
-#include "poll_compat.h"
-
-#ifdef WIN32
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#endif
-#ifdef HAVE_SYS_SOCKET_H
-#include <sys/socket.h>
-#endif
-#ifdef HAVE_NETINET_IN_H
-#include <netinet/in.h>
-#endif
-#ifdef HAVE_NETINET_TCP_H
-#include <netinet/tcp.h>
-#endif
-#ifdef HAVE_ARPA_INET_H
-#include <arpa/inet.h>
-#endif
-
-#ifndef WIN32
-#include <unistd.h>
-#endif
-
-#if PG_VERSION_NUM < 80400
-static int geterrcode(void)
-{
-	/* switch context to work around Assert() in CopyErrorData() */
-	MemoryContext ctx = MemoryContextSwitchTo(TopMemoryContext);
-	ErrorData *edata = CopyErrorData();
-	int code = edata->sqlerrcode;
-	FreeErrorData(edata);
-	MemoryContextSwitchTo(ctx);
-	return code;
-}
+/* find poll() */
+#if defined(HAVE_POLL_H)
+#include <poll.h>
+#elif defined(WIN32)
+#define poll(fds, nfds, timeout_ms) WSAPoll(fds, nfds, timeout_ms)
+#elif !defined(POLLIN)
+#error "PL/Proxy requires poll() API"
 #endif
 
 /* some error happened */
@@ -279,97 +251,6 @@ intr_loop:
 	return true;
 }
 
-static bool
-socket_set_keepalive(int fd, int onoff, int keepidle, int keepintvl, int keepcnt)
-{
-	int val, res;
-
-	if (!onoff) {
-		/* turn keepalive off */
-		val = 0;
-		res = setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &val, sizeof(val));
-		return (res == 0);
-	}
-
-	/* turn keepalive on */
-	val = 1;
-	res = setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &val, sizeof(val));
-	if (res < 0)
-		return false;
-
-	/* Darwin */
-#ifdef TCP_KEEPALIVE
-	if (keepidle) {
-		val = keepidle;
-		res = setsockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, &val, sizeof(val));
-		if (res < 0 && errno != ENOPROTOOPT)
-			return false;
-	}
-#endif
-
-	/* Linux, NetBSD */
-#ifdef TCP_KEEPIDLE
-	if (keepidle) {
-		val = keepidle;
-		res = setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &val, sizeof(val));
-		if (res < 0 && errno != ENOPROTOOPT)
-			return false;
-	}
-#endif
-#ifdef TCP_KEEPINTVL
-	if (keepintvl) {
-		val = keepintvl;
-		res = setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &val, sizeof(val));
-		if (res < 0 && errno != ENOPROTOOPT)
-			return false;
-	}
-#endif
-#ifdef TCP_KEEPCNT
-	if (keepcnt > 0) {
-		val = keepcnt;
-		res = setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &val, sizeof(val));
-		if (res < 0 && errno != ENOPROTOOPT)
-			return false;
-	}
-#endif
-
-	/* Windows */
-#ifdef SIO_KEEPALIVE_VALS
-	if (keepidle || keepintvl) {
-		struct tcp_keepalive vals;
-		DWORD outlen = 0;
-		if (!keepidle) keepidle = 5 * 60;
-		if (!keepintvl) keepintvl = 15;
-		vals.onoff = 1;
-		vals.keepalivetime = keepidle * 1000;
-		vals.keepaliveinterval = keepintvl * 1000;
-		res = WSAIoctl(fd, SIO_KEEPALIVE_VALS, &vals, sizeof(vals), NULL, 0, &outlen, NULL, NULL, NULL, NULL);
-		if (res != 0)
-			return false;
-	}
-#endif
-	return true;
-}
-
-static void setup_keepalive(ProxyConnection *conn)
-{
-	struct sockaddr sa;
-	socklen_t salen = sizeof(sa);
-	int fd = PQsocket(conn->cur->db);
-	ProxyConfig *config = &conn->cluster->config;
-
-	/* turn on keepalive */
-	if (!config->keepidle && !config->keepintvl && !config->keepcnt)
-		return;
-#ifdef AF_UNIX
-	if (getsockname(fd, &sa, &salen) != 0)
-		return;
-	if (sa.sa_family == AF_UNIX)
-		return;
-#endif
-	socket_set_keepalive(fd, 1, config->keepidle, config->keepintvl, config->keepcnt);
-}
-
 static void
 handle_notice(void *arg, const PGresult *res)
 {
@@ -388,10 +269,11 @@ get_connstr(ProxyConnection *conn)
 		return pstrdup(conn->connstr);
 
 	initStringInfo(&cstr);
+	appendStringInfoString(&cstr, conn->connstr);
 	if (info->extra_connstr)
-		appendStringInfo(&cstr, "%s %s", conn->connstr, info->extra_connstr);
+		appendStringInfo(&cstr, " %s", info->extra_connstr);
 	else
-		appendStringInfo(&cstr, "%s user='%s'", conn->connstr, info->username);
+		plproxy_append_cstr_option(&cstr, "user", info->username);
 	return cstr.data;
 }
 
@@ -412,10 +294,11 @@ prepare_conn(ProxyFunction *func, ProxyConnection *conn)
 	{
 		case C_DONE:
 			conn->cur->state = C_READY;
+			/* fallthrough */
 		case C_READY:
 			if (check_old_conn(func, conn, &now))
 				return;
-
+			/* fallthrough */
 		case C_CONNECT_READ:
 		case C_CONNECT_WRITE:
 		case C_QUERY_READ:
@@ -444,8 +327,6 @@ prepare_conn(ProxyFunction *func, ProxyConnection *conn)
 
 	/* override default notice handler */
 	PQsetNoticeReceiver(conn->cur->db, handle_notice, conn);
-
-	setup_keepalive(conn);
 }
 
 
@@ -992,9 +873,21 @@ remote_cancel(ProxyFunction *func)
  * Tag & move tagged connections to active list
  */
 
-static void tag_part(struct ProxyCluster *cluster, int i, int tag)
+static void tag_part(struct ProxyCluster *cluster, int64 hash, int tag)
 {
-	ProxyConnection *conn = cluster->part_map[i];
+	ProxyConnection *conn;
+	int64 idx;
+
+	/* map hash to connection index */
+	if (cluster->config.modular_mapping) {
+		if (hash < 0)
+			idx = -(hash % cluster->part_count);
+		else
+			idx = hash % cluster->part_count;
+	} else {
+		idx = hash & cluster->part_mask;
+	}
+	conn = cluster->part_map[idx];
 
 	if (!conn->run_tag)
 		plproxy_activate_connection(conn);
@@ -1003,7 +896,7 @@ static void tag_part(struct ProxyCluster *cluster, int i, int tag)
 }
 
 /*
- * Run hash function and tag connections. If any of the hash function 
+ * Run hash function and tag connections. If any of the hash function
  * arguments are mentioned in the split_arrays an element of the array
  * is used instead of the actual array.
  */
@@ -1027,7 +920,7 @@ tag_hash_partitions(ProxyFunction *func, FunctionCallInfo fcinfo, int tag,
 	for (i = 0; i < SPI_processed; i++)
 	{
 		bool		isnull;
-		uint32		hashval = 0;
+		int64		hashval = 0;
 		HeapTuple	row = SPI_tuptable->vals[i];
 		Datum		val = SPI_getbinval(row, desc, 1, &isnull);
 
@@ -1043,7 +936,6 @@ tag_hash_partitions(ProxyFunction *func, FunctionCallInfo fcinfo, int tag,
 		else
 			plproxy_error(func, "Hash result must be int2, int4 or int8");
 
-		hashval &= cluster->part_mask;
 		tag_part(cluster, hashval, tag);
 	}
 
@@ -1104,8 +996,7 @@ tag_run_on_partitions(ProxyFunction *func, FunctionCallInfo fcinfo, int tag,
 			tag_part(cluster, i, tag);
 			break;
 		case R_ANY:
-			i = random() & cluster->part_mask;
-			tag_part(cluster, i, tag);
+			tag_part(cluster, random(), tag);
 			break;
 		default:
 			plproxy_error(func, "uninitialized run_type");
@@ -1113,7 +1004,7 @@ tag_run_on_partitions(ProxyFunction *func, FunctionCallInfo fcinfo, int tag,
 }
 
 /*
- * Tag the partitions to be run on, if split is requested prepare the 
+ * Tag the partitions to be run on, if split is requested prepare the
  * per-partition split array parameters.
  *
  * This is done by looping over all of the split arrays side-by-side, for each
@@ -1395,9 +1286,3 @@ plproxy_exec(ProxyFunction *func, FunctionCallInfo fcinfo)
 	}
 	PG_END_TRY();
 }
-
-/* Local Variables:  */
-/* mode: c           */
-/* indent-tabs-mode: 't  */
-/* c-basic-offset: 8  */
-/* End:              */

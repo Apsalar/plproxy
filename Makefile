@@ -1,9 +1,9 @@
 EXTENSION  = plproxy
 
-# sync with NEWS, META.json, plproxy.control, debian/changelog
-DISTVERSION = 2.8
-EXTVERSION = 2.8.0
-UPGRADE_VERS = 2.3.0 2.4.0 2.5.0 2.6.0 2.7.0
+# sync with NEWS, META.json, plproxy.control
+EXTVERSION = 2.10.0
+UPGRADE_VERS = 2.3.0 2.4.0 2.5.0 2.6.0 2.7.0 2.8.0 2.9.0
+DISTVERSION = $(EXTVERSION)
 
 # set to 1 to disallow functions containing SELECT
 NO_SELECT = 0
@@ -17,12 +17,12 @@ PQLIB = $(shell $(PG_CONFIG) --libdir)
 # module setup
 MODULE_big = $(EXTENSION)
 SRCS = src/cluster.c src/execute.c src/function.c src/main.c \
-       src/query.c src/result.c src/type.c src/poll_compat.c src/aatree.c
+       src/query.c src/result.c src/type.c src/aatree.c
 OBJS = src/scanner.o src/parser.tab.o $(SRCS:.c=.o)
 EXTRA_CLEAN = src/scanner.[ch] src/parser.tab.[ch] libplproxy.* plproxy.so
 SHLIB_LINK = -L$(PQLIB) -lpq
 
-HDRS = src/plproxy.h src/rowstamp.h src/aatree.h src/poll_compat.h
+HDRS = src/plproxy.h src/rowstamp.h src/aatree.h
 
 # Server include must come before client include, because there could
 # be mismatching libpq-dev and postgresql-server-dev installed.
@@ -38,46 +38,16 @@ DISTNAME = $(EXTENSION)-$(DISTVERSION)
 REGRESS = plproxy_init plproxy_test plproxy_select plproxy_many \
      plproxy_errors plproxy_clustermap plproxy_dynamic_record \
      plproxy_encoding plproxy_split plproxy_target plproxy_alter \
-     plproxy_cancel
-REGRESS_OPTS = --dbname=regression --inputdir=test
-# pg9.1 ignores --dbname
+     plproxy_cancel plproxy_range plproxy_sqlmed plproxy_table \
+     plproxy_modular
+REGRESS_OPTS = --inputdir=test
+
+# use known db name
 override CONTRIB_TESTDB := regression
 
-# sql source
-PLPROXY_SQL = sql/plproxy_lang.sql
-# Generated SQL files
-EXTSQL = sql/$(EXTENSION)--$(EXTVERSION).sql \
-	$(foreach v,$(UPGRADE_VERS),sql/plproxy--$(v)--$(EXTVERSION).sql) \
-	sql/plproxy--unpackaged--$(EXTVERSION).sql
-
-# PostgreSQL version
-PGVER = $(shell $(PG_CONFIG) --version | sed 's/PostgreSQL //')
-PGMAJOR = $(shell echo $(PGVER) | cut -d'.' -f1 | sed -r "s/([0-9]+)([^0-9].*)?/\1/")
-PGMINOR = $(shell echo $(PGVER) | cut -d'.' -f2 | sed -r "s/([0-9]+)([^0-9].*)?/\1/")
-
-SQLMED = $(shell test $(PGMAJOR) -lt 8 -o \( $(PGMAJOR) -eq 8 -a $(PGMINOR) -lt 4 \) && echo "false" || echo "true")
-PG91 = $(shell test $(PGMAJOR) -lt 9 -o \( $(PGMAJOR) -eq 9 -a $(PGMINOR) -lt 1 \) && echo "false" || echo "true")
-PG92 = $(shell test $(PGMAJOR) -lt 9 -o \( $(PGMAJOR) -eq 9 -a $(PGMINOR) -lt 2 \) && echo "false" || echo "true")
-
-# SQL/MED available, add foreign data wrapper and regression tests
-ifeq ($(SQLMED), true)
-REGRESS += plproxy_sqlmed plproxy_table
-PLPROXY_SQL += sql/plproxy_fdw.sql
-endif
-
-# SQL for extensions or plain?
-ifeq ($(PG91),true)
-DATA_built = $(EXTSQL)
-DATA = $(EXTMISC)
-EXTRA_CLEAN += sql/plproxy.sql
-else
-DATA_built = sql/plproxy.sql
-EXTRA_CLEAN += $(EXTSQL)
-endif
-
-ifeq ($(PG92), true)
-REGRESS += plproxy_range
-endif
+PLPROXY_SQL = sql/plproxy_lang.sql sql/plproxy_fdw.sql
+DATA_built = sql/$(EXTENSION)--$(EXTVERSION).sql \
+	     $(foreach v,$(UPGRADE_VERS),sql/plproxy--$(v)--$(EXTVERSION).sql)
 
 #
 # load PGXS makefile
@@ -107,23 +77,13 @@ src/scanner.c: src/scanner.l
 	@mkdir -p src
 	$(FLEX) -o$@ --header-file=$(@:.c=.h) $<
 
-sql/plproxy.sql: $(PLPROXY_SQL)
-	@mkdir -p sql
-	cat $^ > $@
-
-# plain plproxy.sql is not installed, but used in tests
 sql/$(EXTENSION)--$(EXTVERSION).sql: $(PLPROXY_SQL)
 	@mkdir -p sql
-	echo "create extension plproxy;" > sql/plproxy.sql 
 	cat $^ > $@
 
 $(foreach v,$(UPGRADE_VERS),sql/plproxy--$(v)--$(EXTVERSION).sql): sql/ext_update_validator.sql
 	@mkdir -p sql
 	cat $< >$@
-
-sql/plproxy--unpackaged--$(EXTVERSION).sql: sql/ext_unpackaged.sql
-	@mkdir -p sql
-	cat $< > $@
 
 # dependencies
 
@@ -134,7 +94,7 @@ $(OBJS): $(HDRS)
 tags: $(SRCS) $(HDRS)
 	ctags $(SRCS) $(HDRS)
 
-tgz:
+dist:
 	git archive --prefix=$(DISTNAME)/ HEAD | gzip -9 > $(DISTNAME).tar.gz
 
 zip:
@@ -143,17 +103,30 @@ zip:
 test: install
 	$(MAKE) installcheck || { filterdiff --format=unified regression.diffs | less; exit 1; }
 
+citest:
+	$(MAKE) installcheck || { filterdiff --format=unified regression.diffs; exit 1; }
+
 ack:
 	cp results/*.out test/expected/
 
-deb:
-	rm -f debian/control
-	make -f debian/rules debian/control
-	debuild -uc -us -b
+checkver:
+	@echo "Checking version numbers"
+	@test "$(DISTVERSION)" = "$(EXTVERSION)" \
+		|| { echo "ERROR: DISTVERSION <> EXTVERSION"; exit 1; }
+	@grep -q "^default_version *= *'$(EXTVERSION)'" $(EXTENSION).control \
+		|| { echo "ERROR: $(EXTENSION).control has wrong version"; exit 1; }
+	@grep -q "Proxy $(EXTVERSION) " NEWS.md \
+		|| { echo "ERROR: NEWS.md needs version"; exit 1; }
+	@grep '"version"' META.json | head -n 1 | grep -q '"$(EXTVERSION)"' \
+		|| { echo "ERROR: META.json has wrong version"; exit 1; }
 
-debclean:
-	$(MAKE) -f debian/rules realclean
+REPO = github
+release: checkver
+	git diff --exit-code
+	git tag v$(EXTVERSION)
+	git push $(REPO)
+	git push $(REPO) v$(EXTVERSION):v$(EXTVERSION)
 
-orig:
-	make -f debian/rules orig
+doc/note.md: Makefile NEWS.md
+	awk -vVER=$(EXTVERSION) -f doc/note.awk NEWS.md > doc/note.md
 

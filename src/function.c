@@ -1,8 +1,7 @@
 /*
  * PL/Proxy - easy access to partitioned database.
  *
- * Copyright (c) 2006 Sven Suursoho, Skype Technologies OÜ
- * Copyright (c) 2007 Marko Kreen, Skype Technologies OÜ
+ * Copyright (c) 2006-2020 PL/Proxy Authors
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -201,10 +200,13 @@ fn_cache_insert(ProxyFunction *func)
 static void
 fn_cache_delete(ProxyFunction *func)
 {
+#ifdef USE_ASSERT_CHECKING
 	HashEntry  *hentry;
-
 	hentry = hash_search(fn_cache, &func->oid, HASH_REMOVE, NULL);
 	Assert(hentry != NULL);
+#else
+	hash_search(fn_cache, &func->oid, HASH_REMOVE, NULL);
+#endif
 }
 
 /* check if function returns untyped RECORD which needs the AS clause */
@@ -214,8 +216,16 @@ fn_returns_dynamic_record(HeapTuple proc_tuple)
 	Form_pg_proc proc_struct;
 	proc_struct = (Form_pg_proc) GETSTRUCT(proc_tuple);
 	if (proc_struct->prorettype == RECORDOID
-		&& (heap_attisnull(proc_tuple, Anum_pg_proc_proargmodes)
-		    || heap_attisnull(proc_tuple, Anum_pg_proc_proargnames)))
+		&& (heap_attisnull(proc_tuple, Anum_pg_proc_proargmodes
+#if PG_VERSION_NUM >= 110000
+				, NULL
+#endif
+				)
+		    || heap_attisnull(proc_tuple, Anum_pg_proc_proargnames
+#if PG_VERSION_NUM >= 110000
+					, NULL
+#endif
+					)))
 		return true;
 	return false;
 }
@@ -235,15 +245,13 @@ fn_new(HeapTuple proc_tuple)
 
 	f_ctx = AllocSetContextCreate(TopMemoryContext,
 								  "PL/Proxy function context",
-								  ALLOCSET_SMALL_MINSIZE,
-								  ALLOCSET_SMALL_INITSIZE,
-								  ALLOCSET_SMALL_MAXSIZE);
+								  ALLOCSET_SMALL_SIZES);
 
 	old_ctx = MemoryContextSwitchTo(f_ctx);
 
 	f = palloc0(sizeof(*f));
 	f->ctx = f_ctx;
-	f->oid = HeapTupleGetOid(proc_tuple);
+	f->oid = XProcTupleGetOid(proc_tuple);
 	plproxy_set_stamp(&f->stamp, proc_tuple);
 
 	if (fn_returns_dynamic_record(proc_tuple))
@@ -421,6 +429,9 @@ fn_get_return_type(ProxyFunction *func,
 			break;
 		case TYPEFUNC_RECORD:
 		case TYPEFUNC_OTHER:
+#if PG_VERSION_NUM >= 110000
+		case TYPEFUNC_COMPOSITE_DOMAIN:
+#endif
 			/* fixme: void type here? */
 			plproxy_error(func, "unsupported type");
 			break;
@@ -436,18 +447,20 @@ fn_refresh_record(FunctionCallInfo fcinfo,
 				  HeapTuple proc_tuple) 
 {
 
-	TypeFuncClass rtc;
 	TupleDesc tuple_current, tuple_cached;
 	MemoryContext old_ctx;
 	Oid tuple_oid;
 	int natts;
+	TypeFuncClass rtc;
 
 	/*
 	 * Compare cached tuple to current one.
 	 */
 	tuple_cached = func->ret_composite->tupdesc;
 	rtc = get_call_result_type(fcinfo, &tuple_oid, &tuple_current);
-	Assert(rtc == TYPEFUNC_COMPOSITE);
+	if (rtc != TYPEFUNC_COMPOSITE) {
+		elog(ERROR, "Function used in wrong context");
+	}
 	if (equalTupleDescs(tuple_current, tuple_cached))
 		return;
 
@@ -513,7 +526,7 @@ plproxy_compile(FunctionCallInfo fcinfo,
 	/* sanity check */
 	if (f->run_type == R_ALL && (fcinfo
 								 ? !fcinfo->flinfo->fn_retset
-								 : !get_func_retset(HeapTupleGetOid(proc_tuple))))
+								 : !get_func_retset(XProcTupleGetOid(proc_tuple))))
 		plproxy_error(f, "RUN ON ALL requires set-returning function");
 
 	return f;

@@ -1,8 +1,7 @@
 /*
  * PL/Proxy - easy access to partitioned database.
  *
- * Copyright (c) 2006 Sven Suursoho, Skype Technologies OÜ
- * Copyright (c) 2007 Marko Kreen, Skype Technologies OÜ
+ * Copyright (c) 2006-2020 PL/Proxy Authors
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -50,11 +49,7 @@
 
 #include <sys/time.h>
 
-#ifndef PG_MODULE_MAGIC
-#error PL/Proxy requires 8.2
-#else
 PG_MODULE_MAGIC;
-#endif
 
 PG_FUNCTION_INFO_V1(plproxy_call_handler);
 PG_FUNCTION_INFO_V1(plproxy_validator);
