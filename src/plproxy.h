@@ -222,6 +222,8 @@ typedef struct ProxyConnectionState {
 	bool		waitCancel;		/* True if waiting for answer from cancel */
 	instr_time	start_t;		/* query start time in microseconds */
 	instr_time	conn_t;
+	/* added for Apsalar telemetry */
+	instr_time	query_start_t;
 } ProxyConnectionState;
 
 /* Single database connection */
@@ -450,8 +452,9 @@ typedef struct Telemetry
 	unsigned long magic;
 	long          pid;
 	long	      serial;
-  	long	      conn_time; /* microseconds */
-  	long	      conn_age;
+  	long	      conn_time;  /* microseconds */
+  	long	      conn_age;   /* microseconds */
+	long          query_time; /* when the query was actually sent, Unix */
 	long	      total_time; /* microseconds */
 	int	      funcname_len;
 	int	      hostname_len;

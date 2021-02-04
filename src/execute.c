@@ -191,6 +191,7 @@ send_query(ProxyFunction *func, ProxyConnection *conn,
 
 	gettimeofday(&now, NULL);
 	conn->cur->query_time = now.tv_sec;
+        INSTR_TIME_SET_CURRENT(conn->cur->query_start_t);
 
 	tune_connection(func, conn);
 	if (conn->cur->tuning)
@@ -497,13 +498,14 @@ send_telemetry(ProxyFunction *func, ProxyConnection *conn)
 	Telemetry *data = (Telemetry *) buf;
 	instr_time now;
 	int i;
+	long conn_delay;
 	
 	if (!telemetry_socket) return;
 
 	INSTR_TIME_SET_CURRENT(now);
 
 	data->pid = telemetry_pid;
-	data->magic = 0xdeadbeef00000002;
+	data->magic = 0xdeadbeef00000004;
 	data->partition = -1;
 	for (i=0; i<func->cur_cluster->part_count; i++) {
 		if (func->cur_cluster->part_map[i] == conn) {
@@ -513,14 +515,19 @@ send_telemetry(ProxyFunction *func, ProxyConnection *conn)
 	}
 	
 	data->serial = func->cur_cluster->txid;
-	data->conn_time = INSTR_TIME_GET_MICROSEC(conn->cur->conn_t) - INSTR_TIME_GET_MICROSEC(conn->cur->start_t);
-	if (data->conn_time < 0) {
-		data->conn_age = - data->conn_time;
+	data->query_time = (long) conn->cur->query_time;
+	conn_delay = INSTR_TIME_GET_MICROSEC(conn->cur->conn_t)
+		   - INSTR_TIME_GET_MICROSEC(conn->cur->start_t);
+	data->conn_time = INSTR_TIME_GET_MICROSEC(conn->cur->query_start_t)
+		        - INSTR_TIME_GET_MICROSEC(conn->cur->start_t);
+	if (conn_delay < 0) {
+		data->conn_age = - conn_delay;
 		data->conn_time = 0;
 	} else {
 		data->conn_age = 0;
 	}
-	data->total_time = INSTR_TIME_GET_MICROSEC(now) - INSTR_TIME_GET_MICROSEC(conn->cur->start_t);
+	data->total_time = INSTR_TIME_GET_MICROSEC(now)
+		         - INSTR_TIME_GET_MICROSEC(conn->cur->start_t);
 	data->funcname_len = strlen(func->name);
 	if (data->funcname_len > 256) data->funcname_len = 256;
 	strncpy(buf + sizeof(Telemetry), func->name, data->funcname_len);
